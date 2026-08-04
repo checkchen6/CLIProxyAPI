@@ -128,6 +128,45 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 
 CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-for.me/cn/)
 
+## Docker 部署
+
+编排文件和构建脚本统一放在 [`deploy/dev/`](deploy/dev/)，完整说明见 [`deploy/dev/README_CN.md`](deploy/dev/README_CN.md)。
+
+> 编排文件已从仓库根目录移出。如果你之前是在仓库根执行 `docker compose up -d`，改用下面的命令。
+
+先创建配置文件。它是 bind mount 挂载的，宿主机路径不存在时 Docker 会创建一个同名目录，导致容器启动失败：
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+可以把 `config.yaml` 里的 `auth-dir` 改成绝对路径。以 root 运行时默认值 `~/.cli-proxy-api` 已经能正确解析到 volume 映射目标，写绝对路径的作用是在自定义 UID 运行时去掉对 `HOME` 的依赖：
+
+```yaml
+auth-dir: "/root/.cli-proxy-api"
+```
+
+然后在仓库根目录启动：
+
+```bash
+docker compose -f deploy/dev/docker-compose.yml --project-directory . up -d
+```
+
+`--project-directory` 必须带。volume 的相对路径是按 Compose 的 project 目录解析的，不是按编排文件所在目录，漏了会在 `deploy/dev/` 下另生成一套 `config.yaml` 和 `auths/`。封装脚本已经带上了这个参数，且可以在任意目录执行：
+
+```bash
+./deploy/dev/build.sh      # Linux / macOS
+.\deploy\dev\build.ps1     # Windows
+```
+
+始终必需的端口只有 `8317`。三个 OAuth 回调端口（Claude 用 `54545`、Codex 用 `1455`、Antigravity 用 `51121`）各归各家，只在通过管理面板登录对应厂商时需要可达。
+
+官方镜像覆盖 `linux/amd64` 和 `linux/arm64`：
+
+```bash
+docker pull eceasy/cli-proxy-api:latest
+```
+
 ## 管理 API 文档
 
 请参见 [MANAGEMENT_API_CN.md](https://help.router-for.me/cn/management/api)

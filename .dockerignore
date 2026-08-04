@@ -3,7 +3,7 @@
 .github
 
 # Docker and CI/CD related files
-docker-compose.yml
+deploy
 .dockerignore
 .gitignore
 .goreleaser.yml
@@ -13,6 +13,8 @@ Dockerfile
 docs
 README.md
 README_CN.md
+README_JA.md
+DEPLOYMENT_CN.md
 LICENSE
 
 # Runtime data folders (should be mounted as volumes)

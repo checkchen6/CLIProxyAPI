@@ -3,6 +3,10 @@ services:
     image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
     pull_policy: always
     build:
+      # Paths here resolve against the Compose project directory, not this file's
+      # location. The build scripts pin --project-directory to the repository
+      # root, so "." is the repository root. When running docker compose by hand
+      # from deploy/dev, pass --project-directory ../.. as well.
       context: .
       dockerfile: Dockerfile
       args:

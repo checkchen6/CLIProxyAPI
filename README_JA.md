@@ -127,6 +127,45 @@ PackyCodeは当ソフトウェアのユーザーに特別割引を提供して�
 
 CLIProxyAPIガイド：[https://help.router-for.me/](https://help.router-for.me/)
 
+## Dockerデプロイ
+
+Composeファイルとビルドスクリプトは [`deploy/dev/`](deploy/dev/) にまとめてあります。詳細は [`deploy/dev/README.md`](deploy/dev/README.md) を参照してください。
+
+> Composeファイルはリポジトリのルートから移動しました。以前ルートで `docker compose up -d` を実行していた場合は、下のコマンドに切り替えてください。
+
+まず設定ファイルを作成します。bind mountでマウントされるため、ホスト側のパスが存在しない場合はDockerが同名のディレクトリを作成し、コンテナの起動に失敗します：
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+`config.yaml` の `auth-dir` は絶対パスにしておくこともできます。rootで実行する場合、デフォルトの `~/.cli-proxy-api` はvolumeのマッピング先に正しく解決されます。絶対パスにする利点は、カスタムUIDで実行する際に `HOME` への依存をなくせることです：
+
+```yaml
+auth-dir: "/root/.cli-proxy-api"
+```
+
+そしてリポジトリのルートで起動します：
+
+```bash
+docker compose -f deploy/dev/docker-compose.yml --project-directory . up -d
+```
+
+`--project-directory` は必須です。volumeの相対パスはComposeファイルの場所ではなくプロジェクトディレクトリを基準に解決されるため、省略すると `deploy/dev/` の下に `config.yaml` と `auths/` がもう一組作られます。ヘルパースクリプトはこの引数を自動で渡すため、任意のディレクトリから実行できます：
+
+```bash
+./deploy/dev/build.sh      # Linux / macOS
+.\deploy\dev\build.ps1     # Windows
+```
+
+常に必要なポートは `8317` のみです。3つのOAuthコールバックポート（Claudeは `54545`、Codexは `1455`、Antigravityは `51121`）はプロバイダ固有で、管理パネルからログインする間だけ到達可能である必要があります。
+
+公開イメージは `linux/amd64` と `linux/arm64` に対応しています：
+
+```bash
+docker pull eceasy/cli-proxy-api:latest
+```
+
 ## 管理API
 
 [MANAGEMENT_API.md](https://help.router-for.me/management/api)を参照

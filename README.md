@@ -128,6 +128,45 @@ PackyCode provides special discounts for our software users: register using <a h
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 
+## Docker Deployment
+
+Compose files and build helpers live in [`deploy/dev/`](deploy/dev/); see [`deploy/dev/README.md`](deploy/dev/README.md) for the full guide.
+
+> The Compose files moved out of the repository root. If you previously ran `docker compose up -d` there, use the command below instead.
+
+Create the config file first. It is bind-mounted, so if the host path is missing Docker creates a directory in its place and the container fails to start:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Optionally set `auth-dir` to an absolute path in `config.yaml`. The default `~/.cli-proxy-api` already resolves to the volume mapping target when running as root, but an absolute path removes the dependency on `HOME` if you run with a custom UID:
+
+```yaml
+auth-dir: "/root/.cli-proxy-api"
+```
+
+Then start it, from the repository root:
+
+```bash
+docker compose -f deploy/dev/docker-compose.yml --project-directory . up -d
+```
+
+`--project-directory` is required. Relative volume paths resolve against the Compose project directory rather than the Compose file location, so omitting it creates a second set of `config.yaml` and `auths/` under `deploy/dev/`. The helper scripts pass it for you and can be run from any directory:
+
+```bash
+./deploy/dev/build.sh      # Linux / macOS
+.\deploy\dev\build.ps1     # Windows
+```
+
+Only `8317` is always required. The OAuth callback ports (`54545` for Claude, `1455` for Codex, `51121` for Antigravity) are provider-specific and only need to be reachable while logging in through the management panel.
+
+Published images cover `linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull eceasy/cli-proxy-api:latest
+```
+
 ## Management API
 
 see [MANAGEMENT_API.md](https://help.router-for.me/management/api)
