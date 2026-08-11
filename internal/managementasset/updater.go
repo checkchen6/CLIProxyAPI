@@ -59,6 +59,14 @@ func SetCurrentConfig(cfg *config.Config) {
 // StartAutoUpdater launches a background goroutine that periodically ensures the management asset is up to date.
 // It respects the disable-control-panel flag on every iteration and supports hot-reloaded configurations.
 func StartAutoUpdater(ctx context.Context, configFilePath string) {
+	// The control panel is compiled into the binary, so there is nothing to download
+	// and no reason to let a remote release overwrite the local asset. Operators who
+	// point MANAGEMENT_STATIC_PATH at their own build keep the upstream update flow.
+	if HasEmbeddedPanel() && StaticPathOverride() == "" {
+		log.Debug("management asset auto-updater skipped: control panel is embedded in the binary")
+		return
+	}
+
 	configFilePath = strings.TrimSpace(configFilePath)
 	if configFilePath == "" {
 		log.Debug("management asset auto-updater skipped: empty config path")
@@ -137,6 +145,13 @@ type releaseAsset struct {
 
 type releaseResponse struct {
 	Assets []releaseAsset `json:"assets"`
+}
+
+// StaticPathOverride returns the operator-provided management asset location, if any.
+// A non-empty value means the operator explicitly pointed the server at their own
+// control panel build, which takes precedence over the asset compiled into the binary.
+func StaticPathOverride() string {
+	return strings.TrimSpace(os.Getenv("MANAGEMENT_STATIC_PATH"))
 }
 
 // StaticDir resolves the directory that stores the management control panel asset.

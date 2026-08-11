@@ -287,6 +287,16 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+	// Prefer the panel compiled into the binary so the control panel works offline
+	// and keeps the local branding instead of the upstream release asset.
+	// MANAGEMENT_STATIC_PATH stays authoritative so operators can still serve their own build.
+	if managementasset.StaticPathOverride() == "" {
+		if data, ok := managementasset.EmbeddedPanel(); ok {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+			return
+		}
+	}
+
 	filePath := managementasset.FilePath(s.configFilePath)
 	if strings.TrimSpace(filePath) == "" {
 		c.AbortWithStatus(http.StatusNotFound)

@@ -6,6 +6,10 @@ cli-proxy-api
 config.yaml
 .env
 
+# Temporary local run configs and their auth dirs
+tmp-panel-run*.yaml
+tmp-panel-run-auths/
+
 # Generated content
 bin/*
 /logs
