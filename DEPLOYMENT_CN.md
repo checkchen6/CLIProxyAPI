@@ -33,15 +33,29 @@
 curl -fsSL https://raw.githubusercontent.com/router-for-me/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer | bash
 ```
 
-装到 `/root/cliproxyapi/`。下载失败（卡住/超时，curl 92 错误）说明网络不行，用镜像手动下：
+装到 `/root/cliproxyapi/`。下载失败（卡住/超时，curl 92 错误）说明网络不行，手动下：
 
 ```bash
+# 先查最新 tag（本机能上 GitHub 就在本机查，或直接看 releases 页面）
+curl -sS https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep '"tag_name"'
+
 cd /root && mkdir -p cliproxyapi && cd cliproxyapi
-curl -L -o cli.tar.gz https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/CLIProxyAPI_<版本>_linux_amd64.tar.gz
+V=7.2.118        # 不带 v
+ARCH=amd64       # uname -m 为 x86_64 填 amd64，为 aarch64 就填 aarch64（不是 arm64）
+curl -fL -o cli.tar.gz \
+  "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${V}/CLIProxyAPI_${V}_linux_${ARCH}.tar.gz"
+curl -fL -o checksums.txt \
+  "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${V}/checksums.txt"
+grep "CLIProxyAPI_${V}_linux_${ARCH}.tar.gz" checksums.txt | sha256sum -c -    # 必须 OK
 tar -xzf cli.tar.gz && chmod +x cli-proxy-api
 ```
 
-> ⚠️ 脚本末尾的 `systemctl --user` 在 root 下会报 `Failed to connect to bus`，**属正常，忽略**。下面用系统级服务。
+注意路径里 **tag 带 `v`、文件名里的版本号不带**。系统是 musl（Alpine）或 OpenWrt，要换成 `CLIProxyAPI_${V}_linux_${ARCH}_no-plugin.tar.gz`；官方默认包的 GLIBC 基线是 2.17，低于这个数也用 `_no-plugin`。归档里是 `cli-proxy-api`、`LICENSE`、两个 README 和 `config.example.yaml`，**不含 `config.yaml`**。
+
+> ⚠️ 两个坑：
+>
+> 1. 脚本末尾的 `systemctl --user` 在 root 下会报 `Failed to connect to bus`，**属正常，忽略**。下面用系统级服务。
+> 2. `curl ... | bash` 是管道执行，**脚本本身不会落到磁盘上**。所以 `~/cliproxyapi/cliproxyapi-installer` 这个文件默认不存在，以后想用它升级得先单独下载。升级流程见第二十节，不要直接敲 `installer upgrade`。
 
 ## 三、生成密钥（实践二）
 
@@ -271,8 +285,11 @@ systemctl disable --now cliproxyapi           # 禁用
 systemctl status cliproxyapi                  # 看状态
 journalctl -u cliproxyapi -f                  # 实时看日志
 grep proxy-url /root/cliproxyapi/config.yaml  # 核对代理是否写入
-~/cliproxyapi/cliproxyapi-installer upgrade   # 升级（保留配置）
+cat ~/cliproxyapi/version.txt                 # 看已安装版本号
+ls -d ~/cliproxyapi/*.*.*/                    # 看保留了哪几个版本目录（回滚素材）
 ```
+
+> ⚠️ 升级**不要**直接跑 `~/cliproxyapi/cliproxyapi-installer upgrade`。两个原因：一是第二节用的 `curl ... | bash` 是管道执行，脚本从来没落到磁盘上，这个文件默认不存在；二是 installer 内部管的是 `systemctl --user`，管不到本手册用的系统级 unit，直接跑会出现「文件换了、跑的还是旧进程」。完整升级流程见第二十节。
 
 ---
 
@@ -288,6 +305,10 @@ grep proxy-url /root/cliproxyapi/config.yaml  # 核对代理是否写入
 | 调用 AI 返回 Cloudflare `Unable to load site`（带服务器 IP） | **服务器 IP 被厂商按地区封锁**（香港/国内） | 给服务器配美国等支持地区的出口代理（第六节） |
 | 调用报 `429 Too Many Requests` | 同上，重试后被限流/拦截的表现 | 同上，配出海代理 |
 | 模型不存在 | 模型名填错 | `/v1/models` 查实际可用名 |
+| 面板「检查更新」报 `context deadline exceeded`，但服务器上手动 `curl api.github.com` 秒通 | 程序发的请求走了全局 `proxy-url`（绕美国代理到 GitHub 超过 15 秒），手动 curl 走的是直连 | 无害，可忽略（见第二十节的说明）；想修只能换到 GitHub 更快的代理节点 |
+| `cliproxyapi-installer: No such file or directory` | 第二节的管道式安装（`curl` 直接接 `bash`）不把脚本落到磁盘 | 按第二十节第 2 步重新下载脚本 |
+| installer 显示升级成功，但 banner 还是旧版本号 | installer 用 `systemctl --user`，没重启系统级服务 | 手动 `systemctl restart cliproxyapi`（第二十节第 5 步） |
+| 停服务时报 `failed to shutdown HTTP server: context deadline exceeded` | 旧进程有存量连接，优雅关停超时后被强制结束 | 正常现象，不影响新进程 |
 
 ---
 
@@ -593,6 +614,256 @@ User location is not supported for the API use.
 
 - 排查中账号授权文件里的 refresh_token 曾外泄，建议到该 Google 账号
   [第三方授权页](https://myaccount.google.com/permissions) 撤销并重新登录换新凭证。
+
+---
+
+## 二十、版本升级（实践七）
+
+本节流程实测于 `7.2.74` → `7.2.118`（跨 44 个版本），实际停机约 95 秒。
+
+### 为什么不能直接跑 `installer upgrade`
+
+installer（[cliproxyapi-installer](https://github.com/router-for-me/cliproxyapi-installer)）本身写得不错——自动判断架构（`detect_linux_arch`）、自动识别 musl/OpenWrt 切换 `_no-plugin` 包（`detect_linux_asset_variant`）、保护已有 `config.yaml`（`setup_config` 四级优先级）、保留最近两个版本目录（`cleanup_old_versions`）。但它和本手册的部署方式有两处对不上：
+
+**一、脚本文件默认不存在。** 第二节的安装命令是 `curl -fsSL ... | bash`，管道执行，脚本不落盘。所以 `~/cliproxyapi/cliproxyapi-installer` 需要先单独下载。
+
+**二、它管的是用户级服务，本手册用的是系统级服务。** `is_service_running`、`stop_service`、`start_service`、`restart_service` 四个函数全是 `systemctl --user ... cliproxyapi.service`，而本手册的 unit 在 `/etc/systemd/system/`。后果分两种：
+
+| `~/cliproxyapi/version.txt` | installer 的行为 | 后果 |
+|---|---|---|
+| 存在（当初 installer 装的） | `is_service_running()` 用 `--user` 查不到，返回 false，不停服务；但 `pgrep -f cli-proxy-api` 能找到进程并 `kill` | unit 的 `Restart=always` + `RestartSec=10` 会在 10 秒后用**旧二进制**把服务拉回来，和 installer 的下载过程打架；最后 `restart_service()` 因 `service_was_running=false` 不执行 → **文件是新版、跑的是旧版** |
+| 不存在（当初手动装的） | `is_installed()` 为 false，走全新安装分支，停服务和 kill 进程的代码块都被跳过 | 只覆盖二进制文件，服务继续跑旧版 |
+
+两种情况都不会损坏配置或凭据，但都需要人工收尾。所以正确做法是：**自己先 stop，跑完 installer 自己 start**，让 installer 面对一个干净环境。
+
+### 1. 前置检查
+
+```bash
+cat ~/cliproxyapi/version.txt 2>&1                  # 当前安装版本
+ls -l ~/cliproxyapi/cliproxyapi-installer 2>&1      # 脚本在不在
+ls -d ~/cliproxyapi/*.*.*/                          # 现有版本目录（回滚素材）
+systemctl is-enabled cliproxyapi                    # 应为 enabled
+journalctl -u cliproxyapi --no-pager | grep "CLIProxyAPI Version" | tail -1
+```
+
+最后一条**不要加 `-n 200` 之类的行数限制**。服务连续运行几天后 journal 能累积十几万行，启动 banner 早就在行数窗口之外，会误判成「没有 banner」。要按行数查就用 `--since "-3 minutes"` 按时间过滤。
+
+把 banner 里的三个值记下来作为对照基准，例如：
+
+```
+CLIProxyAPI Version: 7.2.74, Commit: 411d7d41, BuiltAt: 2026-07-14T08:33:07Z
+```
+
+### 2. 网络预检 + 下载 installer 脚本
+
+GitHub 的几个域名可达性**不一样**，要分别测。本次实测香港服务器上 `raw.githubusercontent.com` 和 `api.github.com` 都直连秒通，反而是程序内部走 `proxy-url` 的请求超时（见本节末尾）。
+
+```bash
+# 1. API 域名，同时取最新 tag
+curl -sS --max-time 20 \
+  https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest \
+  | grep '"tag_name"'
+
+# 2. release 下载域名（会 302 到 objects.githubusercontent.com）
+curl -sSL -o /dev/null -w "http=%{http_code} time=%{time_total}s\n" --max-time 20 \
+  https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.118/checksums.txt
+```
+
+两条都通就不用代理。哪条不通就给这一步和后面的 installer 套上代理：
+
+```bash
+export https_proxy=socks5h://<user>:<pass>@<host>:<port>
+export http_proxy=$https_proxy
+export no_proxy=127.0.0.1,localhost
+```
+
+`no_proxy` 别省，第 6 步验证要访问 `127.0.0.1:8317`，回环请求被塞进代理会假失败。这些 `export` 只作用于当前 SSH 会话，跟服务自己用的 `proxy-url` 无关。
+
+下载脚本：
+
+```bash
+curl -fsSL -o ~/cliproxyapi/cliproxyapi-installer \
+  https://raw.githubusercontent.com/router-for-me/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer
+chmod +x ~/cliproxyapi/cliproxyapi-installer
+head -3 ~/cliproxyapi/cliproxyapi-installer     # 必须看到 #!/bin/bash，看到 HTML 说明被拦了
+```
+
+到这一步服务一直正常运行，随时可以中止。
+
+### 3. 备份
+
+```bash
+cp -a /root/.cli-proxy-api "/root/.cli-proxy-api.bak.$(date +%Y%m%d)"
+cp /root/cliproxyapi/config.yaml "/root/cliproxyapi/config.yaml.bak.$(date +%Y%m%d)"
+du -sh /root/.cli-proxy-api.bak.*
+ls -l /root/cliproxyapi/config.yaml.bak.*
+```
+
+installer 的 `backup_config()` 只备份 `config.yaml`（存到 `~/cliproxyapi/config_backup/config_<时间戳>.yaml`），**不碰 `auths/`**。凭据必须自己备。
+
+两个备份文件都确认生成了再往下。服务仍在跑。
+
+### 4. 停服务
+
+```bash
+systemctl stop cliproxyapi
+systemctl is-active cliproxyapi      # 应为 inactive
+pgrep -f cli-proxy-api               # 应无输出
+```
+
+**停机窗口从这里开始**，到第 5 步结束。本次实测 95 秒（19:04:21 停 → 19:05:56 起），其中下载 19.8M 用了 2 秒。这期间宝塔反代返回 502。
+
+手动 stop 是显式停止，systemd 不会触发 `Restart=always`，所以不会出现前面表格里那种时序打架。
+
+日志里这时会出现两条 error，属正常现象：
+
+```
+error stopping API server: failed to shutdown HTTP server: context deadline exceeded
+service shutdown returned error: failed to shutdown HTTP server: context deadline exceeded
+```
+
+旧进程跑了几天、有存量连接，优雅关停超时后被强制结束，不影响新进程。
+
+### 5. 跑 installer，然后手动启动
+
+```bash
+~/cliproxyapi/cliproxyapi-installer upgrade
+```
+
+盯四处输出：
+
+- `Detected platform: linux_amd64`（对照 `uname -m`）
+- `Selected asset variant: default` —— Debian/Ubuntu 应该是 `default`。显示 `no-plugin` 说明它误判成了 musl 或 OpenWrt，停下来查
+- `Latest version: <目标版本>`
+- 配置那步必须是 `Preserved existing user configuration (config.yaml)` 或 `Restored configuration from backup`。**若出现 `Created config.yaml from example with generated API keys`，立刻停下不要启动服务**，说明它没认出你的配置，用第 3 步的备份还原
+
+末尾那些 `systemctl --user` 相关的 `Failed to connect to bus` 是预期的，忽略。
+
+然后手动启动系统级服务，**这步不能省**：
+
+```bash
+systemctl start cliproxyapi
+sleep 3
+systemctl status cliproxyapi --no-pager     # 必须 active (running)
+```
+
+installer 自己打印的 `To start the service: systemctl --user start ...` 对本部署无效，别照着敲。
+
+### 6. 验证
+
+```bash
+# 1. 成败判据：Version / Commit / BuiltAt 三个值都要相对第 1 步的基准发生变化
+journalctl -u cliproxyapi --since "-3 minutes" --no-pager | grep "CLIProxyAPI Version"
+
+# 2. 启动日志无异常
+journalctl -u cliproxyapi --since "-3 minutes" --no-pager | grep -iE "error|warn|fatal"
+
+# 3. 端口在听
+ss -tlnp | grep 8317
+
+# 4. 凭据被新版本认了 —— 跨大版本时这条最关键
+curl -s -H "Authorization: Bearer <secret-key>" \
+  http://127.0.0.1:8317/v0/management/auth-files | head -40
+
+# 5. 模型列表
+curl -s -H "Authorization: Bearer <api-key>" \
+  http://127.0.0.1:8317/v1/models | head -20
+
+# 6. 端到端
+curl -s -X POST http://127.0.0.1:8317/v1/responses \
+  -H "Authorization: Bearer <api-key>" -H "Content-Type: application/json" \
+  -d '{"model":"<从第5条挑一个>","input":"ping"}' | head -20
+
+# 7. 最后从外部走域名调一次，确认反代链路正常
+```
+
+第 1 条只看版本号不够，**Commit 也必须变**。只有版本号变而 Commit 没变，说明运行中的进程还是旧二进制。
+
+第 4 条除了看每个账号的 `status` 是否 `ready`，也可以直接看启动日志里的加载汇总，本次是 `full client load complete - 4 clients (4 auth files + ...)`。
+
+第 6 条报模型不存在就从第 5 条的返回里挑名字重试，跨大版本时模型清单大概率变了，这不算升级失败。
+
+密钥记得替换成真值，连续 5 次错误会被临时封禁约 30 分钟。
+
+### 回滚
+
+`cleanup_old_versions` 保留最近两个版本目录，旧二进制还在：
+
+```bash
+ls -d ~/cliproxyapi/*.*.*/
+systemctl stop cliproxyapi
+cp ~/cliproxyapi/<旧版本>/cli-proxy-api ~/cliproxyapi/cli-proxy-api
+systemctl start cliproxyapi
+journalctl -u cliproxyapi --since "-2 minutes" --no-pager | grep "CLIProxyAPI Version"
+```
+
+banner 回到旧的 Version/Commit 即恢复。配置和凭据全程没被动过，正常不需要还原。
+
+`~/cliproxyapi/<旧版本>/` 目录别手动删，留作回滚素材，下次升级 installer 会自动清理最老的那个。
+
+### 升级后
+
+看新版本有没有你需要的新配置项：
+
+```bash
+NEW=$(cat ~/cliproxyapi/version.txt)
+diff ~/cliproxyapi/${NEW}/config.example.yaml ~/cliproxyapi/config.yaml
+```
+
+差异会很多（本手册的配置是裁剪过的），重点是第 6 步第 2 条有没有报配置相关的 warn，对着这个 diff 定位。
+
+备份观察一两天再清理，别升完就删。
+
+### installer 的三个已知不足
+
+**不校验 checksum。** `download_file()` 只有 `curl -L -o`，连 `-f` 都没加，下载到错误页也会继续，靠后面 `tar -xzf` 失败才终止。介意的话手动下载 release 包并用同 tag 的 `checksums.txt` 校验后自行替换二进制。
+
+**不能指定版本。** `API_URL` 硬编码指向 `releases/latest`，只能升到最新。要装特定版本只能手动下 `CLIProxyAPI_<版本>_linux_<amd64|aarch64>.tar.gz`，解压后只取里面的 `cli-proxy-api` 覆盖（归档里只有二进制、LICENSE、两个 README 和 `config.example.yaml`，不含 `config.yaml`，不会覆盖配置）。
+
+**`cleanup` trap 有副作用。** 它是 `find /tmp -name "tmp.*" -user $(whoami)` 然后 `xargs rm -f`，删的是 `/tmp` 下所有属于当前用户的 `tmp.*`，不限于它自己创建的那个。以 root 运行时理论上会波及其他进程的临时文件，实际风险很低。
+
+另外两个观察，都不影响结果：
+
+- `backup_config()` 用 `echo` 返回文件路径，而 `log_info` 也往 stdout 写，`backup_file=$(backup_config)` 把两者一起捕获了，于是 `Configuration backed up to: ...` 那行日志不会显示在终端，`$backup_file` 变量本身也被污染成多行带颜色码的字符串。后续 `setup_config()` 里 `-f "$backup_file"` 判断失败，跳过 PRIORITY 1 落到 PRIORITY 2。备份文件本身是正常生成的（本次在 `~/cliproxyapi/config_backup/config_20260804_190435.yaml`），配置也被正确保护，只是输出的是 `Preserved existing user configuration` 而不是 `Restored configuration from backup`。
+- `create_systemd_service()` 无条件执行，会在 `~/.config/systemd/user/cliproxyapi.service` 和 `~/cliproxyapi/cliproxyapi.service` 写两份用户级 unit。它不碰 `/etc/systemd/system/cliproxyapi.service`，不影响本手册的服务，但这两个文件会误导后来人——它们不是在生效的配置。
+
+### 面板「检查更新」超时的说明
+
+现象：面板点「检查更新」报
+
+```
+检查更新失败: Get "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest":
+context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+```
+
+启动日志里也会有一条同类的：
+
+```
+[warn] [updater.go:253] failed to fetch latest management release information
+error=... Cli-Proxy-API-Management-Center/releases/latest: context deadline exceeded
+```
+
+而在服务器上手动 `curl api.github.com` 只要 0.6 秒。
+
+根因：`internal/managementasset/updater.go:92` 把 `cfg.ProxyURL` 传给了更新器，`:124` 的 client 是 `&http.Client{Timeout: 15 * time.Second}`。也就是说**程序发出的这个请求走全局 `proxy-url`**（本手册配的是美国 SOCKS5），绕远后超过 15 秒；手动 curl 走的是服务器直连，所以很快。两者出口不同，快慢相反。
+
+**无害，可以忽略。** `updater.go:243-252` 的逻辑是：拉 release 信息失败时，若本地 `management.html` 不存在就去 fallback URL（`https://cpamc.router-for.me/`）兜底，若本地文件已存在就只打一条 warn 然后返回。面板照常工作，唯一后果是它不会自动更新到最新版。
+
+没有配置项能让这个请求绕过 `proxy-url`（`panel-github-repository` 只能换来源，仍然走代理）。想让它成功只能换一个到 GitHub 更快的代理节点。
+
+也就是说，**这个按钮不能当作升级手段**，升级按本节流程走。
+
+### 本次实测记录
+
+```
+7.2.74  / 411d7d41 / 2026-07-14T08:33:07Z
+   ↓  installer upgrade（linux_amd64 / default / 19.8M / 下载 2s @ 7.6MB/s）
+7.2.118 / 29bdd3c1 / 2026-08-04T16:42:05Z
+```
+
+- 停机 95 秒（19:04:21 → 19:05:56），全程手动控制 stop/start
+- 配置走 PRIORITY 2 被保护，4 个账号凭据全部正常加载
+- `7.2.74` 与 `7.2.118` 两个版本目录都保留，回滚素材完整
 
 ---
 
