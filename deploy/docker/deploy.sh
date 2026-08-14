@@ -26,7 +26,7 @@
 #   CLI_PROXY_LEGACY_DIR      old binary install dir     (default /root/cliproxyapi)
 #   CLI_PROXY_LEGACY_AUTH_DIR old credential dir         (default /root/.cli-proxy-api)
 #   CLI_PROXY_SERVICE         old systemd unit name      (default cliproxyapi)
-#   CLI_PROXY_IMAGE           image repository           (default eceasy/cli-proxy-api)
+#   CLI_PROXY_IMAGE           image repository           (default registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api)
 #   CLI_PROXY_BIND            host bind address          (default 127.0.0.1)
 #   CLI_PROXY_PORT            host port                  (default 8317)
 
@@ -37,7 +37,7 @@ DEPLOY_DIR="${CLI_PROXY_DEPLOY_DIR:-/root/cliproxyapi-docker}"
 LEGACY_DIR="${CLI_PROXY_LEGACY_DIR:-/root/cliproxyapi}"
 LEGACY_AUTH_DIR="${CLI_PROXY_LEGACY_AUTH_DIR:-/root/.cli-proxy-api}"
 SERVICE_NAME="${CLI_PROXY_SERVICE:-cliproxyapi}"
-IMAGE="${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api}"
+IMAGE="${CLI_PROXY_IMAGE:-registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api}"
 BIND_ADDR="${CLI_PROXY_BIND:-127.0.0.1}"
 HOST_PORT="${CLI_PROXY_PORT:-8317}"
 CONTAINER_NAME="cli-proxy-api"
@@ -191,7 +191,7 @@ write_compose_file() {
 #      juggling needed.
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api}:${CLI_PROXY_VERSION:?CLI_PROXY_VERSION is required, e.g. v7.2.118}
+    image: ${CLI_PROXY_IMAGE:-registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api}:${CLI_PROXY_VERSION:?CLI_PROXY_VERSION is required, e.g. v7.2.118}
     # The tag is pinned, so re-checking the registry on every start buys
     # nothing. Upgrades go through `docker compose pull` explicitly.
     pull_policy: missing

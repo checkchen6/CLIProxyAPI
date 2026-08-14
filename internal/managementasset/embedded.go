@@ -9,12 +9,15 @@ import (
 // embeddedPanel holds the management control panel asset built from web/management.
 //
 // IMPORTANT: this file is a compiled artifact, not source. It is NOT regenerated
-// automatically by the Go build, and there is currently no CI check that verifies
-// it matches the web/management source. After changing anything under
-// web/management you MUST rebuild and refresh it, otherwise the panel baked into
-// the binary will silently drift from the source:
+// by the Go build itself, and there is no CI check that verifies it matches the
+// web/management source. The image build script rebuilds and refreshes it
+// automatically before compiling (deploy/docker/build-push.ps1 runs the
+// frontend build ahead of the go build gate), so the supported way to change
+// the panel is to edit web/management and build the image through that script.
 //
-//	cd web/management && bun run build
+// If you must refresh it by hand (e.g. a plain local `go build`), do:
+//
+//	cd web/management && bun install --frozen-lockfile && bun run build
 //	cp dist/index.html ../../internal/managementasset/embedded/management.html
 //
 //go:embed embedded/management.html

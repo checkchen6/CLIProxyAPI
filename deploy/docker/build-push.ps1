@@ -29,8 +29,8 @@ param(
     # is no registry to go through.
     [switch] $Save,
 
-    [string] $Registry = "",
-    [string] $Namespace = "",
+    [string] $Registry = "registry.cn-hangzhou.aliyuncs.com",
+    [string] $Namespace = "wgyc",
     [string] $Repository = "cli-proxy-api",
 
     # The server this targets is x86_64. Override for arm64 hosts.
@@ -43,7 +43,12 @@ param(
     [switch] $NoCache,
 
     # Skip the gofmt / go build gates. For emergencies only.
-    [switch] $SkipChecks
+    [switch] $SkipChecks,
+
+    # Skip rebuilding the embedded web management panel. Use when the working
+    # tree already carries a freshly built management.html and you only want to
+    # re-run the image build.
+    [switch] $SkipFrontend
 )
 
 $ErrorActionPreference = "Stop"
@@ -90,6 +95,65 @@ Assert-CommandAvailable git
 docker info *> $null
 Assert-LastExitCode "docker info"
 Write-Ok "docker daemon reachable"
+
+# --- Frontend (embedded management panel) ------------------------------------
+
+# The management panel is served from a single HTML file compiled into the Go
+# binary via //go:embed (internal/managementasset/embedded/management.html).
+# It is a build artifact, not hand-written, and there is no CI step that keeps
+# it in sync with the web/management sources. Rebuilding it here, ahead of the
+# go build gate below, is what prevents the binary from shipping a stale panel
+# after a frontend change. `bun run build` uses vite-plugin-singlefile, so the
+# whole app inlines into dist/index.html with no sidecar assets to copy.
+$WebDir = Join-Path $RepoRoot "web\management"
+$EmbeddedPanel = Join-Path $RepoRoot "internal\managementasset\embedded\management.html"
+
+if ($SkipFrontend) {
+    Write-Warn "frontend build skipped (-SkipFrontend); the embedded panel keeps whatever is on disk"
+    if (-not (Test-Path $EmbeddedPanel)) {
+        Stop-WithError "embedded panel is missing at $EmbeddedPanel and -SkipFrontend was set; the go:embed build would fail"
+    }
+}
+elseif (-not (Test-Path $WebDir)) {
+    Write-Warn "web\management not found; leaving the embedded panel untouched"
+}
+else {
+    Assert-CommandAvailable bun
+
+    # Run bun from inside web\management via Push-Location rather than relying on
+    # `--cwd`: bun's --cwd only reliably reroutes `run` scripts, not `install`,
+    # so cd-ing in is the unambiguous way to target the subproject.
+    Push-Location $WebDir
+    try {
+        Write-Step "bun install (frozen lockfile)"
+        & bun install --frozen-lockfile
+        Assert-LastExitCode "bun install"
+        Write-Ok "frontend dependencies installed"
+
+        Write-Step "bun run build"
+        # VERSION is resolved a few lines down from git describe, but vite reads
+        # it from the environment (getVersion() in vite.config.ts), so surface
+        # the same value here to keep the panel's version banner aligned with
+        # the image tag.
+        $env:VERSION = (& git -C $RepoRoot describe --tags --always --dirty) | Select-Object -First 1
+        Assert-LastExitCode "git describe (frontend version)"
+        & bun run build
+        Assert-LastExitCode "bun run build"
+        Write-Ok "frontend built"
+    }
+    finally {
+        Pop-Location
+    }
+
+    $builtPanel = Join-Path $WebDir "dist\index.html"
+    if (-not (Test-Path $builtPanel)) {
+        Stop-WithError "expected build output not found at $builtPanel"
+    }
+
+    Write-Step "sync embedded panel"
+    Copy-Item -Path $builtPanel -Destination $EmbeddedPanel -Force
+    Write-Ok "updated $EmbeddedPanel"
+}
 
 if (-not $SkipChecks) {
     Assert-CommandAvailable go

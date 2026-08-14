@@ -91,7 +91,7 @@ systemctl enable --now cliproxyapi
 | `--service` / `CLI_PROXY_SERVICE` | `cliproxyapi` |
 | `--bind` / `CLI_PROXY_BIND` | `127.0.0.1` |
 | `--port` / `CLI_PROXY_PORT` | `8317` |
-| `CLI_PROXY_IMAGE` | `eceasy/cli-proxy-api` |
+| `CLI_PROXY_IMAGE` | `registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api` |
 
 `--version` 没有默认值，必填，且显式拒绝 `latest`。原因是这个部署要的是"升级由我决定"，而不是"每次重启撞到当时的最新版"。
 

@@ -22,6 +22,15 @@ auths
 logs
 conv
 config.yaml
+tmp-panel-run*.yaml
+tmp-panel-run-auths
+
+# Frontend source tree. The management panel is pre-built and embedded into the
+# Go binary at internal/managementasset/embedded/management.html via //go:embed,
+# so the web/ sources (and any local node_modules) are neither needed to build
+# the image nor referenced by the Go compiler; excluding them keeps the build
+# context small.
+web
 
 # Development/editor
 bin

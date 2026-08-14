@@ -44,8 +44,15 @@ in `.env` at your own repository and it behaves identically.
   -------------------
   .\deploy\docker\build-push.ps1 -Save
         |
+        |  [frontend] bun install + bun run build in web/management
+        |             -> dist/index.html copied to
+        |                internal/managementasset/embedded/management.html
+        |             (vite-plugin-singlefile inlines everything; skip with
+        |              -SkipFrontend, which requires the panel to exist already)
+        |
         |  [gate 1] gofmt -l          -> any output blocks
         |  [gate 2] go build ./cmd/server -> non-zero blocks
+        |            (embeds the panel refreshed above via //go:embed)
         |  [gate 3] BOM scan of compose/config yaml -> BOM blocks
         |
         |  version <- git describe --tags --always --dirty
