@@ -1,59 +1,57 @@
-# Deployment Flow
+# 部署流程
 
-ASCII diagrams for the single-node Docker deployment driven by
-[`deploy.sh`](deploy.sh). Chinese walkthrough: [README_CN.md](README_CN.md).
+由 [`deploy.sh`](deploy.sh) 驱动的单节点 Docker 部署流程图。中文操作指南：[README_CN.md](README_CN.md)。
 
-The default path uses the published multi-arch image and requires **no build
-step and no checkout of this repository on the server**. Building your own image
-is only necessary when you carry local changes.
+默认路径使用已发布的多架构镜像，**不需要构建步骤，也不需要在服务器上克隆此仓库**。只有在你携带本地改动时才需要构建自己的镜像。
 
 ---
 
-## 1. Choosing a path
+## 1. 选择路径
 
 ```
-                        Do you have local code changes?
-                                    |
-                 +------------------+------------------+
-                 | no                                 | yes
-                 v                                    v
-      Use the published image                 build-push.ps1
-      eceasy/cli-proxy-api:<tag>                      |
-      (amd64 + arm64 manifest,               +--------+--------+
-       one per v* tag)                       |                 |
-                 |                        -Push             -Save
-                 |                           |                 |
-                 |                    private registry   dist/*.tar.gz
-                 |                           |                 |
-                 |                      server pulls     scp + docker load
-                 |                           |                 |
-                 +---------------+-----------+-----------------+
-                                 v
-                             deploy.sh
+                    你有本地代码改动吗？
+                            |
+             +--------------+--------------+
+             | 没有                        | 有
+             v                            v
+    使用已发布的镜像               build-push.ps1
+    eceasy/cli-proxy-api:<tag>            |
+    (amd64 + arm64 manifest,      +-------+-------+
+     每个 v* tag 一个)            |               |
+             |                 默认推送          -Save
+             |                    |               |
+             |             私有 registry    dist/*.tar.gz
+             |                    |               |
+             |              服务器 pull     scp + docker load
+             |                    |               |
+             +----------+---------+---------------+
+                        v
+                    deploy.sh
 ```
 
-Nothing about `deploy.sh` assumes the official image; point `CLI_PROXY_IMAGE`
-in `.env` at your own repository and it behaves identically.
+`deploy.sh` 不假定使用官方镜像；在 `.env` 中将 `CLI_PROXY_IMAGE` 指向你自己的仓库即可。
 
 ---
 
-## 2. Building your own image (optional)
+## 2. 构建你自己的镜像（可选）
 
 ```
-  Windows workstation
-  -------------------
-  .\deploy\docker\build-push.ps1 -Save
+  Windows 工作站
+  ─────────────
+  .\deploy\docker\build-push.ps1          # 默认推送到阿里云 registry
+  .\deploy\docker\build-push.ps1 -Local   # 只本地构建，不推送
+  .\deploy\docker\build-push.ps1 -Save    # 导出 tar.gz
         |
-        |  [frontend] bun install + bun run build in web/management
-        |             -> dist/index.html copied to
+        |  [frontend] bun install + bun run build (web/management)
+        |             -> dist/index.html 复制到
         |                internal/managementasset/embedded/management.html
-        |             (vite-plugin-singlefile inlines everything; skip with
-        |              -SkipFrontend, which requires the panel to exist already)
+        |             (vite-plugin-singlefile 内联所有资源；
+        |              用 -SkipFrontend 跳过，但需面板文件已存在)
         |
-        |  [gate 1] gofmt -l          -> any output blocks
-        |  [gate 2] go build ./cmd/server -> non-zero blocks
-        |            (embeds the panel refreshed above via //go:embed)
-        |  [gate 3] BOM scan of compose/config yaml -> BOM blocks
+        |  [gate 1] gofmt -l            -> 任何输出都会阻止构建
+        |  [gate 2] go build ./cmd/server -> 非零退出码阻止构建
+        |            (通过 //go:embed 嵌入上面刷新的面板)
+        |  [gate 3] BOM scan compose/config yaml -> 发现 BOM 则阻止
         |
         |  version <- git describe --tags --always --dirty
         |  commit  <- git rev-parse --short HEAD
@@ -67,24 +65,20 @@ in `.env` at your own repository and it behaves identically.
         v
   cli-proxy-api:<version>
         |
-        +-- -Push -> docker login <registry>   (no -u/-p; credential store only)
-        |            docker push <ref>          (exit code checked per push)
+        +-- 默认 -> docker login <registry>  (无 -u/-p；仅凭据存储)
+        |            docker push <ref>        (每次推送检查退出码)
         |
         +-- -Save -> docker save -o dist/<name>.tar
                      GZipStream -> dist/<name>.tar.gz
-                     (docker save is written with -o, never piped: PowerShell
-                      pipelines are text-oriented and corrupt binary streams)
+                     (docker save 使用 -o 写入，不用管道：PowerShell
+                      管道是面向文本的，会损坏二进制流)
 ```
 
-Every native command is followed by an explicit `$LASTEXITCODE` check.
-`$ErrorActionPreference = "Stop"` does not cover native commands on Windows
-PowerShell 5.1, so relying on it alone would let a failed `compose build` fall
-through into `up -d`. `deploy/dev/build.ps1` guards against this the same way,
-inside its `Invoke-Compose` wrapper.
+每个原生命令后面都有显式的 `$LASTEXITCODE` 检查。`$ErrorActionPreference = "Stop"` 不覆盖 Windows PowerShell 5.1 上的原生命令，所以仅依赖它会让失败的 `compose build` 继续进入 `up -d`。`deploy/dev/build.ps1` 以同样的方式防范这个问题，在其 `Invoke-Compose` 包装器内部。
 
 ---
 
-## 3. First deployment: migrating off the systemd binary
+## 3. 首次部署：从 systemd 二进制迁移
 
 ```
   scp deploy/docker/deploy.sh root@<server>:/root/
@@ -94,22 +88,22 @@ inside its `Invoke-Compose` wrapper.
         |
         v
   [preflight]
-     docker present, daemon reachable
-     compose flavour detected (docker compose | docker-compose)
-     uname -m reported
+     docker 存在，daemon 可达
+     compose 类型检测 (docker compose | docker-compose)
+     uname -m 报告
         |
         v
   [scaffold]  /root/cliproxyapi-docker/
      mkdir auths/ logs/ plugins/
-     render docker-compose.yml   (skipped if it already exists)
-     render .env                 (CLI_PROXY_VERSION bumped, old copy backed up)
+     render docker-compose.yml   (如果已存在则跳过)
+     render .env                 (CLI_PROXY_VERSION 更新，旧副本备份)
         |
         v
-  [stop legacy]                        <-- prompts for confirmation
+  [stop legacy]                        <-- 提示确认
      systemctl stop cliproxyapi
      systemctl disable cliproxyapi
-        |     stop alone is not enough: Restart=always only covers crashes,
-        |     but an enabled unit returns on the next boot and re-takes 8317
+        |     仅 stop 不够：Restart=always 只覆盖崩溃，
+        |     但启用的单元在下次启动时返回并重新占用 8317
         v
   [migrate payload]
      cp /root/cliproxyapi/config.yaml       -> ./config.yaml
@@ -118,17 +112,15 @@ inside its `Invoke-Compose` wrapper.
      cp -a /root/.cli-proxy-api/.           -> ./auths/
         |
         v
-  [audit config.yaml]                  <-- warnings prompt to continue
-     BOM at offset 0?                        -> blocks YAML parsing
-     host: must be "" / 0.0.0.0 / ::         -> a loopback value binds the
-                                                CONTAINER's lo, and the
-                                                published port maps to nothing
-     auth-dir: must reach /root/.cli-proxy-api -> otherwise credentials are
-                                                  written into the container
-                                                  layer and lost on recreate
-     port: must be 8317                      -> compose maps the container side
-     allow-remote: false                     -> informational; Docker SNAT makes
-                                                on-host curl non-local
+  [audit config.yaml]                  <-- 警告提示是否继续
+     offset 0 有 BOM？                      -> 阻止 YAML 解析
+     host: 必须是 "" / 0.0.0.0 / ::         -> 回环值绑定容器 lo，
+                                               发布的端口映射到空
+     auth-dir: 必须到达 /root/.cli-proxy-api -> 否则凭据写入容器层
+                                               并在重建时丢失
+     port: 必须是 8317                      -> compose 映射容器端口
+     allow-remote: false                    -> 信息性；Docker SNAT 使
+                                               主机 curl 非本地
         |
         v
   [start]
@@ -138,20 +130,16 @@ inside its `Invoke-Compose` wrapper.
         v
   [verify]
      docker inspect  -> State.Status == running
-     docker logs     -> "CLIProxyAPI Version: ..." banner
-                        (printed by main() before flag parsing, so it is the
-                         build's own claim rather than a tag guess)
-     ss -tlnH        -> must be 127.0.0.1:8317, NOT 0.0.0.0:8317
-     curl /v1/models -> expect 200, using the first api-keys entry
+     docker logs     -> "CLIProxyAPI Version: ..." 横幅
+                        (在标志解析前由 main() 打印，所以是构建的
+                         自己的声明而不是标签猜测)
+     ss -tlnH        -> 必须是 127.0.0.1:8317，不是 0.0.0.0:8317
+     curl /v1/models -> 期望 200，使用第一个 api-keys 条目
 ```
 
-The `ss` line is the acceptance check that matters most. Docker installs its
-DNAT rules in the `DOCKER` chain, which iptables traverses **before** `INPUT`,
-so a `0.0.0.0` publication is not covered by ufw, firewalld, or a control-panel
-firewall. The API key would be the only thing standing in front of it.
+`ss` 行是最重要的验收检查。Docker 在 `DOCKER` 链中安装其 DNAT 规则，iptables **在** `INPUT` 之前遍历，所以 `0.0.0.0` 发布不被 ufw、firewalld 或控制面板防火墙覆盖。API 密钥将是唯一挡在它前面的东西。
 
-Rollback stays cheap because the old binary, its version directories, and the
-unit file are all left in place:
+回滚保持低成本，因为旧二进制文件、其版本目录和 unit 文件都留在原处：
 
 ```
   cd /root/cliproxyapi-docker && docker compose down
@@ -160,22 +148,22 @@ unit file are all left in place:
 
 ---
 
-## 4. Routine upgrades
+## 4. 日常升级
 
 ```
-  Option A - re-run the script
-  ---------------------------
+  选项 A - 重新运行脚本
+  ─────────────────────
   /root/deploy.sh --version v7.2.119
         |
-        |  compose file: left alone (already exists)
-        |  .env: CLI_PROXY_VERSION bumped, previous copy kept as .env.bak.<stamp>
-        |  legacy migration: skipped (no --from-binary)
+        |  compose 文件：保持不变（已存在）
+        |  .env: CLI_PROXY_VERSION 更新，之前的副本保留为 .env.bak.<stamp>
+        |  遗留迁移：跳过（无 --from-binary）
         v
   pull -> up -d -> verify
 
 
-  Option B - by hand
-  ------------------
+  选项 B - 手动
+  ─────────────
   cd /root/cliproxyapi-docker
   vi .env                      # CLI_PROXY_VERSION=v7.2.119
   docker compose pull
@@ -183,98 +171,84 @@ unit file are all left in place:
   docker compose logs -f --tail 50
 ```
 
-Both paths are non-destructive: `config.yaml`, `auths/`, `logs/`, and
-`plugins/` all live on bind mounts outside the container.
+两条路径都是非破坏性的：`config.yaml`、`auths/`、`logs/` 和 `plugins/` 都位于容器外的绑定挂载上。
 
-Config edits are picked up by the file watcher without a restart. Restart only
-when the watcher itself failed to start.
+配置编辑由文件观察器捕获，无需重启。只有在观察器本身启动失败时才需要重启。
 
 ---
 
-## 5. Request routing
+## 5. 请求路由
 
 ```
-  Client (browser, IDE, SDK)
+  客户端 (浏览器, IDE, SDK)
         |
-        |  HTTPS, public DNS
+        |  HTTPS, 公共 DNS
         v
-  Host reverse proxy (control panel Nginx, Caddy, ...)
-    - terminates TLS
-    - sets X-Forwarded-For
+  主机反向代理 (控制面板 Nginx, Caddy, ...)
+    - 终止 TLS
+    - 设置 X-Forwarded-For
         |
         |  proxy_pass http://127.0.0.1:8317
         v
-  Docker published port  127.0.0.1:8317 -> container 8317
-    - DNAT in the DOCKER chain
-    - SNAT rewrites the source address to the bridge gateway (172.x.0.1)
+  Docker 发布端口  127.0.0.1:8317 -> 容器 8317
+    - DOCKER 链中的 DNAT
+    - SNAT 将源地址重写为网桥网关 (172.x.0.1)
         |
         v
-  CLIProxyAPI in the container, listening on 0.0.0.0:8317
-    - host: "" in config.yaml is what makes this binding possible
+  容器中的 CLIProxyAPI，监听 0.0.0.0:8317
+    - config.yaml 中的 host: "" 使此绑定成为可能
         |
-        +-- /v1/*, /v1beta/*  -> provider APIs, guarded by api-keys
-        +-- /v0/management/*  -> management API, guarded by secret-key
-        |        and by allow-remote when the caller is not 127.0.0.1/::1
+        +-- /v1/*, /v1beta/*  -> 提供商 API，由 api-keys 保护
+        +-- /v0/management/*  -> 管理 API，由 secret-key 保护
+        |        并且当调用者不是 127.0.0.1/::1 时由 allow-remote 保护
         |
-        |   c.ClientIP() honours X-Forwarded-For, because no SetTrustedProxies
-        |   call narrows Gin's default of trusting every proxy. Requests coming
-        |   through the reverse proxy therefore carry the real client address
-        |   and are never treated as local.
+        |   c.ClientIP() 遵循 X-Forwarded-For，因为没有 SetTrustedProxies
+        |   调用缩小 Gin 信任每个代理的默认设置。因此通过反向代理的
+        |   请求携带真实客户端地址，永远不会被视为本地。
         v
-  Upstream providers (Gemini / Claude / Codex / ...)
+  上游提供商 (Gemini / Claude / Codex / ...)
 ```
 
-OAuth callback ports (`54545` Claude, `1455` Codex, `51121` Antigravity) are
-commented out in the generated compose file. Credentials carried over from an
-earlier deployment keep working, so they are only needed when adding a new
-provider account. When that happens, uncomment the single port you need and
-reach it through an SSH tunnel rather than publishing it:
+OAuth 回调端口（`54545` Claude, `1455` Codex, `51121` Antigravity）在生成的 compose 文件中被注释掉。从早期部署继承的凭据继续工作，所以只有在添加新提供商账户时才需要它们。当需要时，取消注释你需要的单个端口，并通过 SSH 隧道访问它：
 
 ```
   ssh -L 54545:127.0.0.1:54545 root@<server>
 ```
 
-The callback lands on `http://localhost:<port>/...` in **your** browser, so the
-port has to be reachable from your workstation, not from the internet. The
-three ports are provider-specific and not interchangeable; a missing one fails
-by timing out after roughly five minutes instead of erroring immediately.
+回调在**你的**浏览器中落在 `http://localhost:<port>/...`，所以端口必须从你的工作站可达，而不是从互联网。这三个端口是提供商特定的，不可互换；缺少的端口在大约五分钟后超时失败，而不是立即出错。
 
 ---
 
-## 6. Data persistence
+## 6. 数据持久化
 
 ```
-  /root/cliproxyapi-docker/            (host)                container
+  /root/cliproxyapi-docker/            (主机)                容器
   |
-  +-- docker-compose.yml     rendered once, then yours to edit
+  +-- docker-compose.yml     渲染一次，然后由你编辑
   +-- .env                   CLI_PROXY_IMAGE / VERSION / BIND / PORT
   |
   +-- config.yaml       <-->  /CLIProxyAPI/config.yaml
-  |     must exist as a FILE before the first start. Docker creates a
-  |     directory of the same name when the path is missing, which turns into
-  |     a crash loop that needs `rm -rf config.yaml` to clear.
+  |     必须在首次启动前作为文件存在。当路径缺失时 Docker 创建同名
+  |     目录，这会变成需要 `rm -rf config.yaml` 清理的崩溃循环。
   |
   +-- auths/            <-->  /root/.cli-proxy-api
-  |     OAuth credentials. Must match `auth-dir`. The file watcher picks up
-  |     new credential files without a restart.
+  |     OAuth 凭据。必须匹配 `auth-dir`。文件观察器捕获新凭据文件
+  |     无需重启。
   |
   +-- logs/             <-->  /CLIProxyAPI/logs
-  |     Empty unless `logging-to-file: true`; stdout is the default, read it
-  |     with `docker compose logs -f`. Note that ResolveLogDirectory prefers
-  |     $WRITABLE_PATH/logs when that variable is set, which would bypass this
-  |     mount.
+  |     除非 `logging-to-file: true` 否则为空；默认是 stdout，用
+  |     `docker compose logs -f` 读取。注意 ResolveLogDirectory 在
+  |     设置 $WRITABLE_PATH 时优先使用 $WRITABLE_PATH/logs，会绕过
+  |     此挂载。
   |
   +-- plugins/          <-->  /CLIProxyAPI/plugins
-        Optional shared-library plugins.
+        可选的共享库插件。
 
-  Backups kept by deploy.sh (never pruned automatically):
-    ./config.yaml.bak.<stamp>              existing config replaced on migration
-    ./.env.bak.<stamp>                     version bumped
+  deploy.sh 保留的备份（永不自动清理）：
+    ./config.yaml.bak.<stamp>              迁移时替换的现有配置
+    ./.env.bak.<stamp>                     版本更新
     /root/cliproxyapi/config.yaml.bak.<stamp>
     /root/.cli-proxy-api.bak.<stamp>
 ```
 
-No database and no cache service. Local file storage is the default and needs
-no environment variables at all; Postgres, git, and object-store backends are
-opt-in through the `PGSTORE_*`, `GITSTORE_*`, and `OBJECTSTORE_*` variables
-documented in [`.env.example`](../../.env.example).
+没有数据库和缓存服务。本地文件存储是默认的，完全不需要环境变量；Postgres、git 和对象存储后端通过 [`.env.example`](../../.env.example) 中记录的 `PGSTORE_*`、`GITSTORE_*` 和 `OBJECTSTORE_*` 变量选入。

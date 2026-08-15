@@ -15,18 +15,21 @@
 #   3. BOM scan - a UTF-8 BOM breaks YAML parsing for docker compose
 #
 # Usage:
-#   .\deploy\docker\build-push.ps1
-#   .\deploy\docker\build-push.ps1 -Save
-#   .\deploy\docker\build-push.ps1 -Push -Registry registry.cn-hangzhou.aliyuncs.com -Namespace myns
+#   .\deploy\docker\build-push.ps1                  # build and push :<version> AND :latest (default)
+#   .\deploy\docker\build-push.ps1 -NoLatest        # skip the :latest tag
+#   .\deploy\docker\build-push.ps1 -Local           # build locally only, do not push
+#   .\deploy\docker\build-push.ps1 -Save            # build locally and export a gzipped tar
+#   .\deploy\docker\build-push.ps1 -Registry registry.cn-hangzhou.aliyuncs.com -Namespace myns
 #   .\deploy\docker\build-push.ps1 -NoCache -Platform linux/arm64
 
 [CmdletBinding()]
 param(
-    # Push the built image to a registry.
-    [switch] $Push,
+    # Build the image locally only, without pushing to a registry. Without this
+    # switch the script pushes to the configured registry by default.
+    [switch] $Local,
 
     # Export the image to a gzipped tar for transfer over scp. Useful when there
-    # is no registry to go through.
+    # is no registry to go through. Implies local-only (no push).
     [switch] $Save,
 
     [string] $Registry = "registry.cn-hangzhou.aliyuncs.com",
@@ -36,9 +39,11 @@ param(
     # The server this targets is x86_64. Override for arm64 hosts.
     [string] $Platform = "linux/amd64",
 
-    # Also tag and push :latest. Off by default: the deployment side pins an
-    # explicit tag, so nothing would consume it.
-    [switch] $PushLatest,
+    # Skip the :latest tag. Tagging and pushing :latest is ON by default because
+    # deploy.sh defaults to the :latest tag -- if the registry does not carry it,
+    # the server-side pull fails with "manifest unknown". Only use this when you
+    # deliberately want a build that no default deployment can pick up.
+    [switch] $NoLatest,
 
     [switch] $NoCache,
 
@@ -225,8 +230,10 @@ $imageBase = $Repository
 if ($Namespace) { $imageBase = "$Namespace/$Repository" }
 if ($Registry)  { $imageBase = "$Registry/$imageBase" }
 
-if ($Push -and -not $Registry) {
-    Stop-WithError "-Push needs -Registry (and usually -Namespace)."
+# Default behavior: push to registry unless -Local or -Save is specified
+$shouldPush = -not $Local -and -not $Save
+if ($shouldPush -and -not $Registry) {
+  Stop-WithError "Cannot push without -Registry. Use -Local to build without pushing."
 }
 
 $imageRef = "${imageBase}:${VERSION}"
@@ -252,7 +259,7 @@ $buildArgs = @(
     "-f", "$RepoRoot\Dockerfile",
     "-t", $imageRef
 )
-if ($PushLatest) { $buildArgs += @("-t", "${imageBase}:latest") }
+if (-not $NoLatest) { $buildArgs += @("-t", "${imageBase}:latest") }
 if ($NoCache)    { $buildArgs += "--no-cache" }
 $buildArgs += $RepoRoot
 
@@ -262,7 +269,7 @@ Write-Ok "built $imageRef"
 
 # --- Deliver ----------------------------------------------------------------
 
-if ($Push) {
+if ($shouldPush) {
     Write-Step "docker login $Registry"
     # No -u/-p on purpose: credentials belong in the platform credential store,
     # not in a script or a shell history.
@@ -274,7 +281,7 @@ if ($Push) {
     Assert-LastExitCode "docker push (version tag)"
     Write-Ok "pushed $imageRef"
 
-    if ($PushLatest) {
+    if (-not $NoLatest) {
         Write-Step "docker push ${imageBase}:latest"
         & docker push "${imageBase}:latest"
         Assert-LastExitCode "docker push (latest tag)"
@@ -282,12 +289,19 @@ if ($Push) {
     }
 
     Write-Host ""
-    Write-Host "On the server:"
-    Write-Host "  docker login $Registry"
-    Write-Host "  cd /root/cliproxyapi-docker"
-    Write-Host "  sed -i 's|^CLI_PROXY_IMAGE=.*|CLI_PROXY_IMAGE=$imageBase|' .env"
-    Write-Host "  sed -i 's|^CLI_PROXY_VERSION=.*|CLI_PROXY_VERSION=$VERSION|' .env"
-    Write-Host "  docker compose pull; docker compose up -d"
+    if (-not $NoLatest) {
+        Write-Host "On the server (deploy.sh defaults to this image and the :latest tag):"
+        Write-Host "  docker login $Registry"
+        Write-Host "  /root/deploy.sh"
+        Write-Host ""
+        Write-Host "To pin this exact build instead:"
+        Write-Host "  /root/deploy.sh --version $VERSION"
+    }
+    else {
+        Write-Host "On the server (no :latest tag was pushed, so the tag must be pinned):"
+        Write-Host "  docker login $Registry"
+        Write-Host "  /root/deploy.sh --version $VERSION"
+    }
 }
 elseif ($Save) {
     $outDir = Join-Path $RepoRoot "dist"
@@ -333,5 +347,5 @@ elseif ($Save) {
 }
 else {
     Write-Host ""
-    Write-Host "Image built locally only. Add -Push (with -Registry/-Namespace) or -Save to deliver it."
+    Write-Host "Image built locally only (-Local). To push it to a registry, run without -Local."
 }

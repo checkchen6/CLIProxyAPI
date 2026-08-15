@@ -8,18 +8,20 @@
 #      stop and disable the old unit, back it up, then copy config.yaml and the
 #      OAuth credential directory into the Docker deployment directory.
 #
-#   2. Routine upgrades (default): pull the pinned image tag and recreate the
-#      container.
+#   2. Routine upgrades (default): pull the configured image tag and recreate
+#      the container. Defaults to :latest; pass --version to pin a tag.
 #
-# The script is self-contained. It renders docker-compose.yml and .env into the
-# deployment directory on first run and never overwrites them afterwards, so
-# hand edits survive later upgrades. Nothing here needs a checkout of this
-# repository on the server: scp this single file over and run it.
+# The script is self-contained. On first run it renders docker-compose.yml, .env
+# and a starter config.yaml (with freshly generated random keys) into the
+# deployment directory, and never overwrites them afterwards, so hand edits
+# survive later upgrades. Nothing here needs a checkout of this repository on
+# the server: scp this single file over and run it.
 #
 # Usage:
-#   ./deploy.sh --version v7.2.118 --from-binary
-#   ./deploy.sh --version v7.2.119
-#   ./deploy.sh --version v7.2.119 --dry-run
+#   ./deploy.sh                             # deploy or upgrade to :latest (default)
+#   ./deploy.sh --version v7.2.119          # pin an explicit tag instead
+#   ./deploy.sh --from-binary               # first run: migrate off the systemd unit
+#   ./deploy.sh --dry-run                   # print every command without running it
 #
 # Overridable via environment or flags:
 #   CLI_PROXY_DEPLOY_DIR      deployment directory       (default /root/cliproxyapi-docker)
@@ -27,12 +29,13 @@
 #   CLI_PROXY_LEGACY_AUTH_DIR old credential dir         (default /root/.cli-proxy-api)
 #   CLI_PROXY_SERVICE         old systemd unit name      (default cliproxyapi)
 #   CLI_PROXY_IMAGE           image repository           (default registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api)
+#   CLI_PROXY_VERSION         image tag                  (default latest)
 #   CLI_PROXY_BIND            host bind address          (default 127.0.0.1)
 #   CLI_PROXY_PORT            host port                  (default 8317)
 
 set -euo pipefail
 
-VERSION=""
+VERSION="${CLI_PROXY_VERSION:-latest}"
 DEPLOY_DIR="${CLI_PROXY_DEPLOY_DIR:-/root/cliproxyapi-docker}"
 LEGACY_DIR="${CLI_PROXY_LEGACY_DIR:-/root/cliproxyapi}"
 LEGACY_AUTH_DIR="${CLI_PROXY_LEGACY_AUTH_DIR:-/root/.cli-proxy-api}"
@@ -90,7 +93,7 @@ confirm() {
 }
 
 usage() {
-    sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,35p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -118,10 +121,18 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$VERSION" ] || die "--version is required (e.g. --version v7.2.118). Pinning the tag keeps upgrades deliberate; 'latest' is intentionally not accepted."
+[ -n "$VERSION" ] || die "--version was given an empty value. Omit the flag to use the default 'latest', or pass an explicit tag such as v7.2.118."
 
 case "$VERSION" in
-    latest) die "'latest' is rejected on purpose: every 'up -d' would silently jump to whatever was published last. Pin an explicit tag such as v7.2.118." ;;
+    latest)
+        # Floating tag: deliberate default so a plain ./deploy.sh ships the newest
+        # build. start_stack() always runs an explicit `docker compose pull`, so
+        # each run of this script does pick up a freshly published :latest.
+        # pull_policy stays `missing` in the rendered compose file, which means a
+        # container restart or host reboot reuses the local image instead of
+        # failing when the registry is unreachable.
+        log "image tag: latest (floating; pass --version vX.Y.Z to pin a build)"
+        ;;
     v*) : ;;
     *) warn "Image tags published by CI carry a leading 'v' (VERSION=\${GITHUB_REF_NAME} in .github/workflows/docker-image.yml). '${VERSION}' may not resolve." ;;
 esac
@@ -135,18 +146,18 @@ COMPOSE=()
 preflight() {
     log "Preflight checks"
 
-    command -v docker >/dev/null 2>&1 || die "docker not found. Install Docker Engine first."
+    command -v docker >/dev/null 2>&1 || die "没找到 docker 命令，请先安装 Docker Engine。"
 
     if docker compose version >/dev/null 2>&1; then
         COMPOSE=(docker compose)
     elif command -v docker-compose >/dev/null 2>&1; then
         COMPOSE=(docker-compose)
     else
-        die "Neither 'docker compose' nor 'docker-compose' is available."
+        die "'docker compose' 和 'docker-compose' 都不可用，请先安装 compose 插件。"
     fi
     ok "compose command: ${COMPOSE[*]}"
 
-    docker info >/dev/null 2>&1 || die "Cannot talk to the Docker daemon. Is it running, and do you have permission?"
+    docker info >/dev/null 2>&1 || die "连不上 Docker daemon。确认它在运行（systemctl status docker），以及当前用户有权限。"
     ok "docker daemon reachable"
 
     log "host architecture: $(uname -m) (official manifests cover linux/amd64 and linux/arm64)"
@@ -184,16 +195,18 @@ write_compose_file() {
 #      DOCKER chain, which is traversed before INPUT, so a 0.0.0.0 binding is
 #      NOT covered by ufw/firewalld/BT-panel rules. Keep it on loopback and let
 #      the host reverse proxy terminate TLS.
-#   3. CLI_PROXY_VERSION is required rather than defaulted, so a missing value
-#      fails loudly instead of resolving to `latest`.
+#   3. CLI_PROXY_VERSION defaults to `latest`, matching deploy.sh's own default.
+#      Pin an explicit tag in .env when a build needs to stay put.
 #   4. Relative volume paths resolve against this file's directory, because the
 #      compose file lives in the deployment directory. No --project-directory
 #      juggling needed.
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api}:${CLI_PROXY_VERSION:?CLI_PROXY_VERSION is required, e.g. v7.2.118}
-    # The tag is pinned, so re-checking the registry on every start buys
-    # nothing. Upgrades go through `docker compose pull` explicitly.
+    image: ${CLI_PROXY_IMAGE:-registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api}:${CLI_PROXY_VERSION:-latest}
+    # `missing` rather than `always`: a container restart or host reboot reuses
+    # the local image instead of failing when the registry is unreachable.
+    # Upgrades go through an explicit `docker compose pull`, which deploy.sh
+    # always runs -- so a floating :latest is still refreshed on every deploy.
     pull_policy: missing
     container_name: cli-proxy-api
     environment:
@@ -235,7 +248,7 @@ write_env_file() {
         local current
         current="$(sed -n 's/^CLI_PROXY_VERSION=//p' "$target" | head -n 1)"
         if [ "$current" = "$VERSION" ]; then
-            ok ".env already pins ${VERSION}"
+            ok ".env already set to ${VERSION}"
             return 0
         fi
         log "bumping CLI_PROXY_VERSION: ${current:-<unset>} -> ${VERSION}"
@@ -260,11 +273,124 @@ ENV_FILE
     ok "wrote ${target}"
 }
 
+# Hex string generator for the generated credentials. openssl is the common
+# case; /dev/urandom keeps this working on minimal images that ship neither
+# openssl nor a package manager.
+gen_random_hex() {
+    local bytes="${1:-24}"
+
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex "$bytes" && return 0
+    fi
+
+    if [ -r /dev/urandom ]; then
+        # od + tr rather than `head -c ... | base64`: base64 can emit '/' and '+',
+        # which would need quoting care inside the YAML this feeds.
+        od -An -tx1 -N "$bytes" /dev/urandom | tr -d ' \n' && printf '\n' && return 0
+    fi
+
+    return 1
+}
+
+# Render a starter config.yaml when the deployment directory has none.
+#
+# Skipped for --from-binary, where migrate_payload copies the existing file over
+# instead -- generating one first would only trigger the "overwrite?" prompt.
+#
+# Never overwrites an existing file. The secret-key inside is replaced by its
+# bcrypt hash on first start, so clobbering it would lock the operator out of
+# the management panel with no way to recover the old value.
+write_config_file() {
+    local target="${DEPLOY_DIR}/config.yaml"
+
+    if [ -f "$target" ]; then
+        ok "config.yaml already present, left untouched"
+        return 0
+    fi
+
+    if [ "$FROM_BINARY" -eq 1 ]; then
+        log "config.yaml will be migrated from ${LEGACY_DIR} (--from-binary)"
+        return 0
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '       would write: %s (with a generated api-key and secret-key)\n' "$target"
+        return 0
+    fi
+
+    local api_key secret_key
+    api_key="sk-$(gen_random_hex 24)" || die "cannot generate an API key: neither openssl nor /dev/urandom is usable. Create ${target} by hand."
+    secret_key="$(gen_random_hex 24)" || die "cannot generate a management key: neither openssl nor /dev/urandom is usable. Create ${target} by hand."
+
+    cat > "$target" <<CONFIG_YAML
+# Rendered by deploy.sh on first run. Edit freely -- later runs never overwrite
+# this file.
+#
+# Three values are container-specific. Changing them breaks the deployment:
+#
+#   host      Must stay "". The process then binds every interface INSIDE the
+#             container. A loopback value binds the container's own lo, and the
+#             published port maps to nothing -- the service looks completely
+#             dead from outside while the logs look fine. Exposure is
+#             controlled by CLI_PROXY_BIND in .env, not by this field.
+#   port      Must stay 8317, which is the container side of the compose port
+#             mapping.
+#   auth-dir  Must stay /root/.cli-proxy-api, the volume mount target. Any
+#             other path writes OAuth credentials into the container layer,
+#             where they are lost on the next recreate.
+host: ""
+port: 8317
+auth-dir: "/root/.cli-proxy-api"
+
+remote-management:
+  # Must be true for a container deployment. The handler decides "local client"
+  # by comparing the source IP against 127.0.0.1 / ::1 literally, and under
+  # Docker the source is never loopback: SNAT rewrites it to the bridge gateway
+  # (172.x.0.1), while requests through a reverse proxy carry the real public
+  # IP. With false, every management request is rejected with 403.
+  #
+  # Compensate with the strong secret-key below, HTTPS-only exposure, and an IP
+  # allowlist on the management paths in the reverse proxy.
+  allow-remote: true
+
+  # Generated by deploy.sh. Replaced by its bcrypt hash on first start.
+  secret-key: "${secret_key}"
+
+  disable-control-panel: false
+
+# Client-facing keys. Generated by deploy.sh; add more entries as needed.
+api-keys:
+  - "${api_key}"
+
+debug: false
+logging-to-file: false
+
+# Leave empty for direct connections. Servers in regions that OpenAI/Anthropic
+# block (mainland China, Hong Kong) need an egress proxy here, for example
+# "socks5://user:pass@host:1080".
+proxy-url: ""
+
+request-retry: 3
+
+routing:
+  strategy: "round-robin"
+CONFIG_YAML
+
+    ok "wrote ${target}"
+    printf '\n'
+    warn "已生成密钥，请立刻复制保存（secret-key 只显示这一次）："
+    printf '         api-key    客户端调用用    : %s\n' "$api_key"
+    printf '         secret-key 管理面板登录用  : %s\n' "$secret_key"
+    warn "容器首次启动后，config.yaml 里的 secret-key 会被换成 bcrypt 哈希，明文无法再从文件恢复。"
+    printf '\n'
+}
+
 scaffold() {
     log "Preparing ${DEPLOY_DIR}"
     run mkdir -p "${DEPLOY_DIR}/auths" "${DEPLOY_DIR}/logs" "${DEPLOY_DIR}/plugins"
     write_compose_file
     write_env_file
+    write_config_file
 }
 
 # ------------------------------------------------------------------------------
@@ -286,12 +412,12 @@ stop_legacy_service() {
         return 0
     fi
 
-    warn "About to stop and disable ${SERVICE_NAME}.service."
-    warn "Both deployments listen on ${HOST_PORT}; leaving the unit enabled means it grabs the port again after a reboot."
-    warn "The old binary and unit file stay on disk, so rolling back is 'systemctl enable --now ${SERVICE_NAME}'."
+    warn "即将停止并 disable 旧服务 ${SERVICE_NAME}.service。"
+    warn "两套部署都占用 ${HOST_PORT} 端口；只 stop 不 disable 的话，服务器重启后旧服务会重新抢占端口。"
+    warn "旧的二进制和 unit 文件都会留在原处，回滚只需执行 'systemctl enable --now ${SERVICE_NAME}'。"
 
-    if ! confirm "Stop and disable ${SERVICE_NAME}.service now?"; then
-        die "Declined. The migration cannot continue while the old service owns port ${HOST_PORT}."
+    if ! confirm "现在停止并 disable ${SERVICE_NAME}.service 吗？"; then
+        die "已取消。旧服务还占着 ${HOST_PORT} 端口，迁移无法继续。"
     fi
 
     run systemctl stop "${SERVICE_NAME}"
@@ -373,11 +499,21 @@ audit_config() {
     local cfg="${DEPLOY_DIR}/config.yaml"
     log "Auditing ${cfg}"
 
-    [ -f "$cfg" ] || die "config.yaml is missing. Run with --from-binary to migrate it, or drop it in by hand (cp config.example.yaml config.yaml)."
+    if [ ! -f "$cfg" ]; then
+        # A real run renders config.yaml in scaffold() before reaching this
+        # point, so a missing file here only happens under --dry-run, where
+        # nothing was actually written. Skipping keeps the dry run able to
+        # preview the remaining steps instead of stopping short.
+        if [ "$DRY_RUN" -eq 1 ]; then
+            log "config.yaml not written yet (dry run); skipping the audit"
+            return 0
+        fi
+        die "config.yaml 不存在且未能自动生成。请手工创建 ${cfg}，或加 --from-binary 从旧的二进制部署迁移。"
+    fi
 
     # A stray BOM makes the YAML parser choke on the very first key.
     if head -c 3 "$cfg" | od -An -tx1 2>/dev/null | tr -d ' \n' | grep -qi '^efbbbf$'; then
-        warn "config.yaml starts with a UTF-8 BOM. Strip it: sed -i '1s/^\xEF\xBB\xBF//' ${cfg}"
+        warn "config.yaml 带 UTF-8 BOM，YAML 会在第一个键上解析失败。清除：sed -i '1s/^\xEF\xBB\xBF//' ${cfg}"
         AUDIT_FAILED=1
     fi
 
@@ -392,8 +528,8 @@ audit_config() {
             ok "host is '${host_value}' (binds all interfaces inside the container, correct)"
             ;;
         *)
-            warn "host is '${host_value}'. Inside a container this binds the container's own loopback only, and the published port will map to nothing."
-            warn "Set 'host: \"\"' in ${cfg}. Exposure is already restricted by the ${BIND_ADDR} port binding, not by this setting."
+            warn "host 写成了 '${host_value}'。容器里这只会绑定容器自己的回环网卡，宿主机的端口映射会打到空处，表现是服务像完全死了。"
+            warn "请把 ${cfg} 里改成 host: \"\"。对外暴露范围由端口绑定地址（${BIND_ADDR}）控制，不是靠这个字段。"
             AUDIT_FAILED=1
             ;;
     esac
@@ -410,11 +546,11 @@ audit_config() {
             log "auth-dir is '${auth_dir}'; Docker injects HOME=/root so it resolves onto the mount. Consider the explicit '/root/.cli-proxy-api' to drop the implicit HOME dependency."
             ;;
         "")
-            warn "auth-dir is not set. Add 'auth-dir: \"/root/.cli-proxy-api\"' so credentials land on the ./auths mount."
+            warn "auth-dir 没有设置。请加上 auth-dir: \"/root/.cli-proxy-api\"，否则 OAuth 凭据不会落在 ./auths 挂载里。"
             AUDIT_FAILED=1
             ;;
         *)
-            warn "auth-dir is '${auth_dir}', which is not the volume target /root/.cli-proxy-api. Credentials would be written into the container layer and lost on recreate."
+            warn "auth-dir 是 '${auth_dir}'，不是卷挂载目标 /root/.cli-proxy-api。凭据会被写进容器层，容器重建后全部丢失（需要重新授权所有账号）。"
             AUDIT_FAILED=1
             ;;
     esac
@@ -422,7 +558,7 @@ audit_config() {
     local port_value
     port_value="$(read_top_level_scalar "$cfg" port)"
     if [ -n "$port_value" ] && [ "$port_value" != "8317" ]; then
-        warn "config port is ${port_value} but the compose file maps the container side to 8317. Align them or the mapping misses the listener."
+        warn "config.yaml 里 port 是 ${port_value}，但 compose 映射的容器端口是 8317。两者必须一致，否则端口映射打不到监听进程。"
         AUDIT_FAILED=1
     fi
 
@@ -430,6 +566,15 @@ audit_config() {
     # address to the bridge gateway, so a direct on-host curl no longer looks
     # like 127.0.0.1 to the handler (internal/api/handlers/management/handler.go
     # compares the string literally).
+    # disable-control-panel: true makes GET /management.html return a bare 404
+    # with no hint about why, which is genuinely hard to diagnose from the
+    # outside -- the image, the reverse proxy and every other check look fine.
+    if grep -qE '^[[:space:]]+disable-control-panel:[[:space:]]*true' "$cfg"; then
+        warn "disable-control-panel 是 true，管理面板 /management.html 会直接返回 404（镜像和反代都正常也一样打不开）。"
+        warn "要用面板就把 ${cfg} 里这一项改成 false，然后执行 'docker compose restart'。"
+        AUDIT_FAILED=1
+    fi
+
     if grep -q '^remote-management:' "$cfg"; then
         if grep -qE '^[[:space:]]+allow-remote:[[:space:]]*true' "$cfg"; then
             ok "remote-management.allow-remote is true"
@@ -439,8 +584,8 @@ audit_config() {
     fi
 
     if [ "$AUDIT_FAILED" -eq 1 ]; then
-        if ! confirm "The audit raised warnings above. Continue anyway?"; then
-            die "Stopped. Fix ${cfg} and re-run."
+        if ! confirm "配置体检有上面这些警告，仍要继续吗？"; then
+            die "已停止。请先修正 ${cfg} 再重跑。"
         fi
     fi
 }
@@ -469,10 +614,10 @@ verify() {
     local state
     state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "missing")"
     if [ "$state" = "running" ]; then
-        ok "container state: running"
+        ok "容器状态：running"
     else
-        warn "container state: ${state}"
-        warn "inspect the logs: docker logs --tail 80 ${CONTAINER_NAME}"
+        warn "容器状态异常：${state}"
+        warn "查看日志排查：docker logs --tail 80 ${CONTAINER_NAME}"
         return 1
     fi
 
@@ -483,7 +628,7 @@ verify() {
     if [ -n "$reported" ]; then
         ok "${reported}"
     else
-        warn "no version banner in the logs yet; check 'docker logs ${CONTAINER_NAME}'"
+        warn "日志里还没打印版本横幅（容器刚启动，通常等几秒即可，不影响部署）。手动确认：docker logs ${CONTAINER_NAME} | grep Version"
     fi
 
     # The acceptance check for the firewall-bypass problem: this must show the
@@ -494,18 +639,19 @@ verify() {
         if [ -n "$listen" ]; then
             case "$listen" in
                 *"0.0.0.0:${HOST_PORT}"* | *":::${HOST_PORT}"* | *"*:${HOST_PORT}"*)
-                    warn "port ${HOST_PORT} is published on ${listen} (all interfaces)."
-                    warn "Docker's DNAT rules sit in the DOCKER chain, ahead of INPUT, so host firewall rules do NOT cover this. Set CLI_PROXY_BIND=127.0.0.1 in ${DEPLOY_DIR}/.env and re-run 'docker compose up -d'."
+                    warn "危险：端口 ${HOST_PORT} 绑定在 ${listen}（所有网卡），等于直接暴露到公网。"
+                    warn "Docker 的 DNAT 规则在 DOCKER 链，早于 INPUT，宝塔/ufw/firewalld 的放行规则管不住它。"
+                    warn "请把 ${DEPLOY_DIR}/.env 里的 CLI_PROXY_BIND 改成 127.0.0.1，再执行 'docker compose up -d'。"
                     ;;
                 *)
-                    ok "port ${HOST_PORT} published on ${listen}"
+                    ok "端口 ${HOST_PORT} 绑定在 ${listen}（仅本机，正确）"
                     ;;
             esac
         else
-            warn "nothing is listening on ${HOST_PORT}"
+            warn "端口 ${HOST_PORT} 上没有监听，服务可能没起来"
         fi
     else
-        log "ss not available, skipping the bind-address check"
+        log "ss 命令不可用，跳过绑定地址检查"
     fi
 
     local key
@@ -516,34 +662,42 @@ verify() {
             -H "Authorization: Bearer ${key}" \
             "http://127.0.0.1:${HOST_PORT}/v1/models" || echo "000")"
         if [ "$code" = "200" ]; then
-            ok "GET /v1/models returned 200"
+            ok "接口自测通过：GET /v1/models 返回 200（服务真的可用了）"
         else
-            warn "GET /v1/models returned ${code} (expected 200)"
+            warn "接口自测失败：GET /v1/models 返回 ${code}（期望 200）。查日志：docker logs ${CONTAINER_NAME}"
         fi
     else
-        log "skipping the /v1/models probe (curl missing, or no api-keys entry in config.yaml)"
+        log "跳过接口自测（没有 curl，或 config.yaml 里没有 api-keys）"
     fi
 }
 
 summary() {
     cat <<SUMMARY
 
-$(printf '%s' "$C_OK")Done.$(printf '%s' "$C_OFF") Day-to-day commands, all from ${DEPLOY_DIR}:
+$(printf '%s' "$C_OK")部署完成。$(printf '%s' "$C_OFF")当前镜像 tag：${VERSION}
+
+日常命令（都在 ${DEPLOY_DIR} 目录下执行）：
 
   cd ${DEPLOY_DIR}
-  docker compose logs -f --tail 100     # follow logs (stdout unless logging-to-file is on)
-  docker compose restart                # apply a config.yaml change the file watcher missed
-  docker compose down                   # stop
+  docker compose logs -f --tail 100     # 看日志（默认输出到 stdout）
+  docker compose restart                # 配置改动没被自动加载时重启
+  docker compose down                   # 停止
 
-Upgrading: edit CLI_PROXY_VERSION in .env, then 'docker compose pull && docker compose up -d',
-or re-run this script with a new --version.
+升级：直接重跑本脚本（默认 :latest，每次都会先 pull）；
+      或改 .env 里的 CLI_PROXY_VERSION，再执行 'docker compose pull && docker compose up -d'。
 
-Rolling back to the binary deployment (its files were left in place):
+回滚到指定版本：./deploy.sh --version vX.Y.Z
+查看当前实际运行的版本：docker logs ${CONTAINER_NAME} 2>&1 | grep -m1 'CLIProxyAPI Version:'
+
+接下来通常还要做：
+  1. 用反向代理（宝塔 / Nginx）把域名指到 127.0.0.1:${HOST_PORT}，并配好 HTTPS
+  2. 打开管理面板 https://你的域名/management.html ，用上面的 secret-key 登录
+  3. 在面板里添加 Gemini / Claude / Codex 等提供商账号
+
+回滚到旧的二进制部署（相关文件都还在原处）：
 
   cd ${DEPLOY_DIR} && docker compose down
   systemctl enable --now ${SERVICE_NAME}
-
-The host reverse proxy needs no change: it keeps pointing at 127.0.0.1:${HOST_PORT}.
 SUMMARY
 }
 

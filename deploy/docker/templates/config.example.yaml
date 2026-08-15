@@ -1,0 +1,111 @@
+# Docker 部署最小化生产配置模板
+# 复制到 /root/cliproxyapi-docker/config.yaml 并按需修改。
+#
+# 与完整版 config.example.yaml 的关键区别：
+#   1. host: "" 必须留空（Docker 场景下绑定容器内所有接口）
+#   2. auth-dir 必须是 /root/.cli-proxy-api（匹配 docker-compose.yml 的卷挂载）
+#   3. 只包含核心配置，高级选项参见仓库根目录的 config.example.yaml
+
+# 服务监听地址（Docker 场景必须留空）
+# 对外暴露由 .env 里的 CLI_PROXY_BIND 控制，不是这个字段
+host: ""
+
+# 服务端口（容器内部端口，由 docker-compose.yml 映射）
+port: 8317
+
+# 管理 API 设置
+remote-management:
+  # Docker 场景必须为 true。管理接口把源 IP 和 127.0.0.1/::1 做字面比较来判定
+  # “本地客户端”，而 Docker 的 SNAT 会把源地址改写成网桥网关（172.x.0.1），
+  # 经反向代理进来的请求又会带上真实公网 IP —— 两种情况都不是回环，
+  # 保持 false 会让所有管理请求返回 403 remote management disabled。
+  # 安全性靠强 secret-key + 只经 HTTPS 暴露 + 反代层 IP 白名单来保证。
+  allow-remote: true
+
+  # 管理面板密钥（务必修改成强随机值！）
+  # 面板地址：https://你的域名/management.html
+  # 注意 /v0/management/ 是管理 API 前缀，不是面板页面
+  secret-key: "your-secure-secret-key-here"
+
+  # 保持管理面板启用
+  disable-control-panel: false
+
+# OAuth 凭据存储目录（必须匹配 docker-compose.yml 的卷挂载）
+auth-dir: "/root/.cli-proxy-api"
+
+# 客户端认证 API 密钥（必须替换为强随机值）
+# 下面两个是模板值，会被安全模式识别并禁用所有代理端点，
+# 忘记修改时服务会主动拦住并提示，而不是带着弱密钥对外服务。
+api-keys:
+  - "your-api-key-1"
+  - "your-api-key-2"
+
+# 调试日志（排查问题时设为 true）
+debug: false
+
+# 输出到日志文件而非 stdout（日志写入 ./logs 卷）
+logging-to-file: false
+
+# 全局代理（可选，留空则直连）
+# 示例："socks5://user:pass@proxy.example.com:1080"
+proxy-url: ""
+
+# 请求重试次数（HTTP 403/408/500/502/503/504 时重试）
+request-retry: 3
+
+# 路由策略
+routing:
+  strategy: "round-robin"  # 可选：round-robin、weighted-round-robin、fill-first
+  session-affinity: false
+
+# ============================================================
+# 以下为提供商配置，按需取消注释并填写
+# ============================================================
+
+# Gemini API 密钥
+# gemini-api-key:
+#   - api-key: "AIzaSy...01"
+#     models:
+#       - name: "gemini-2.5-flash"
+#         alias: "gemini-flash"
+
+# Claude API 密钥
+# claude-api-key:
+#   - api-key: "sk-ant-..."
+#     models:
+#       - name: "claude-3-5-sonnet-20241022"
+#         alias: "claude-sonnet-latest"
+
+# Codex API 密钥
+# codex-api-key:
+#   - api-key: "sk-proj-..."
+#     models:
+#       - name: "gpt-5-codex"
+#         alias: "codex-latest"
+
+# xAI API 密钥
+# xai-api-key:
+#   - api-key: "xai-..."
+#     models:
+#       - name: "grok-4.5"
+#         alias: "grok-latest"
+
+# OpenAI 兼容提供商（如 OpenRouter、DeepSeek）
+# openai-compatibility:
+#   - name: "openrouter"
+#     base-url: "https://openrouter.ai/api/v1"
+#     api-key-entries:
+#       - api-key: "sk-or-v1-..."
+#     models:
+#       - name: "deepseek/deepseek-chat"
+#         alias: "deepseek-chat"
+
+# ============================================================
+# OAuth 提供商接入流程（Claude / Codex / Antigravity）
+# ============================================================
+# 1. 在 docker-compose.yml 中取消注释对应的回调端口
+# 2. 建立 SSH 隧道：ssh -L 54545:127.0.0.1:54545 root@你的服务器
+# 3. 访问管理面板：https://你的域名/management.html
+# 4. 通过 OAuth 流程添加提供商账号
+# 5. 凭据自动保存到 ./auths/ 目录
+# 6. 关闭回调端口并重启容器

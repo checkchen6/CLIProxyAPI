@@ -1,0 +1,50 @@
+# Single-node production compose file, rendered by deploy.sh.
+#
+# Differences from deploy/dev/docker-compose.yml in the repository:
+#
+#   1. No `build:` section. This file only consumes published images; the server
+#      never compiles Go or downloads a module cache.
+#   2. The published port binds to a host address supplied through
+#      CLI_PROXY_BIND, default 127.0.0.1. Docker installs its DNAT rules in the
+#      DOCKER chain, which is traversed before INPUT, so a 0.0.0.0 binding is
+#      NOT covered by ufw/firewalld/BT-panel rules. Keep it on loopback and let
+#      the host reverse proxy terminate TLS.
+#   3. CLI_PROXY_VERSION defaults to `latest`, matching deploy.sh's own default.
+#      Pin an explicit tag in .env when a build needs to stay put.
+#   4. Relative volume paths resolve against this file's directory, because the
+#      compose file lives in the deployment directory. No --project-directory
+#      juggling needed.
+services:
+  cli-proxy-api:
+    image: ${CLI_PROXY_IMAGE:-registry.cn-hangzhou.aliyuncs.com/wgyc/cli-proxy-api}:${CLI_PROXY_VERSION:-latest}
+    # `missing` rather than `always`: a container restart or host reboot reuses
+    # the local image instead of failing when the registry is unreachable.
+    # Upgrades go through an explicit `docker compose pull`, which deploy.sh
+    # always runs -- so a floating :latest is still refreshed on every deploy.
+    pull_policy: missing
+    container_name: cli-proxy-api
+    environment:
+      # The image already bakes in Asia/Shanghai; kept here so it can be
+      # overridden from .env without rebuilding.
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${CLI_PROXY_BIND:-127.0.0.1}:${CLI_PROXY_PORT:-8317}:8317"
+      # OAuth callback listeners. Credentials carried over from an existing
+      # deployment keep working, so these stay closed by default. To add a new
+      # provider account later, uncomment the one you need and reach it from
+      # your workstation over an SSH tunnel, for example:
+      #   ssh -L 54545:127.0.0.1:54545 root@<server>
+      # Each provider owns its port and they are not interchangeable.
+      # - "${CLI_PROXY_BIND:-127.0.0.1}:54545:54545"  # Anthropic / Claude
+      # - "${CLI_PROXY_BIND:-127.0.0.1}:1455:1455"    # Codex
+      # - "${CLI_PROXY_BIND:-127.0.0.1}:51121:51121"  # Antigravity
+    volumes:
+      # config.yaml must already exist as a FILE. Docker creates a directory of
+      # the same name when the path is missing, which turns into a crash loop.
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      # Must line up with `auth-dir` in config.yaml.
+      - ./auths:/root/.cli-proxy-api
+      # Empty unless `logging-to-file: true`; logs go to stdout by default.
+      - ./logs:/CLIProxyAPI/logs
+      - ./plugins:/CLIProxyAPI/plugins
+    restart: unless-stopped
