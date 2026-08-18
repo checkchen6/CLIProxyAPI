@@ -483,6 +483,15 @@ export function IconSidebarQuota({ size = 20, ...props }: IconProps) {
 
 export const IconSidebarLogs = IconScrollText;
 
+export function IconSidebarUsageStats({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <path d="M3 3v18h18" />
+      <path d="M7 16l4-8 4 4 4-8" />
+    </svg>
+  );
+}
+
 export function IconSidebarSystem({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>

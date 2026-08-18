@@ -106,6 +106,7 @@
     "plugin_store": "Plugin Store",
     "config_management": "Config Panel",
     "logs": "Logs Viewer",
+    "usage_stats": "Usage Stats",
     "system_info": "Management Center Info"
   },
   "nav_groups": {
@@ -125,6 +126,7 @@
     "plugins": "Plugin toggles & config",
     "plugin_store": "Discover & install plugins",
     "logs": "Request tracing",
+    "usage_stats": "Token & request analytics",
     "config_management": "Gateway configuration",
     "system_info": "Runtime & diagnostics"
   },
@@ -1720,5 +1722,35 @@
     "modelCatalog": {
       "notLoaded": "Not loaded"
     }
+  },
+  "usage_stats": {
+    "title": "Usage Statistics",
+    "subtitle": "Token consumption and request distribution by model and endpoint",
+    "today": "Today",
+    "last_7_days": "Last 7 Days",
+    "last_30_days": "Last 30 Days",
+    "loading": "Loading usage data...",
+    "no_data": "No data available",
+    "total_requests": "Total Requests",
+    "chat_tokens": "Chat Tokens",
+    "image_requests": "Image Requests",
+    "failure_rate": "Failure Rate",
+    "avg_latency": "Avg Latency",
+    "avg_ttft": "Avg TTFT",
+    "in": "In",
+    "out": "Out",
+    "failures": "failures",
+    "request_distribution": "Request Type Distribution",
+    "hourly_latency": "Hourly Avg Latency",
+    "model_detail": "Model Detail",
+    "col_model": "Model",
+    "col_type": "Type",
+    "col_requests": "Requests",
+    "col_tokens": "Total Tokens",
+    "col_avg_latency": "Avg Latency",
+    "col_ttft": "TTFT",
+    "col_failed": "Failed",
+    "chat": "Chat",
+    "image": "Image"
   }
 }

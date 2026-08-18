@@ -28,6 +28,7 @@ import {
   IconSidebarQuota,
   IconSidebarStore,
   IconSidebarSystem,
+  IconSidebarUsageStats,
   IconChevronDown,
 } from '@/components/ui/icons';
 import wgycLogo from '@/assets/wgyc-logo.svg';
@@ -62,6 +63,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   pluginStore: <IconSidebarStore size={18} />,
   config: <IconSidebarConfig size={18} />,
   logs: <IconSidebarLogs size={18} />,
+  usageStats: <IconSidebarUsageStats size={18} />,
   system: <IconSidebarSystem size={18} />,
 };
 
@@ -649,6 +651,12 @@ export function MainLayout() {
           labelKey: 'nav.logs',
           metaKey: 'nav_meta.logs',
           icon: sidebarIcons.logs,
+        },
+        {
+          path: '/usage-stats',
+          labelKey: 'nav.usage_stats',
+          metaKey: 'nav_meta.usage_stats',
+          icon: sidebarIcons.usageStats,
         },
       ],
     },

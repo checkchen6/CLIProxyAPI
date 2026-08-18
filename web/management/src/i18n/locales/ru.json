@@ -106,6 +106,7 @@
     "plugin_store": "Магазин плагинов",
     "config_management": "Панель конфигурации",
     "logs": "Просмотр логов",
+    "usage_stats": "Статистика",
     "system_info": "Информация системы"
   },
   "nav_groups": {
@@ -124,6 +125,7 @@
     "plugins": "Переключатели и ресурсы плагинов",
     "plugin_store": "Поиск и установка плагинов",
     "logs": "Трассировка запросов",
+    "usage_stats": "Аналитика токенов и запросов",
     "config_management": "Базовая конфигурация шлюза",
     "system_info": "Состояние и диагностика"
   },
@@ -1698,5 +1700,35 @@
     "modelCatalog": {
       "notLoaded": "Не загружено"
     }
+  },
+  "usage_stats": {
+    "title": "Статистика использования",
+    "subtitle": "Распределение запросов и потребление токенов по моделям",
+    "today": "Сегодня",
+    "last_7_days": "7 дней",
+    "last_30_days": "30 дней",
+    "loading": "Загрузка данных...",
+    "no_data": "Нет данных",
+    "total_requests": "Всего запросов",
+    "chat_tokens": "Токены чата",
+    "image_requests": "Запросы изображений",
+    "failure_rate": "Ошибки",
+    "avg_latency": "Сред. задержка",
+    "avg_ttft": "Сред. TTFT",
+    "in": "Вход",
+    "out": "Выход",
+    "failures": "ошибок",
+    "request_distribution": "Распределение запросов",
+    "hourly_latency": "Почасовая задержка",
+    "model_detail": "Детализация моделей",
+    "col_model": "Модель",
+    "col_type": "Тип",
+    "col_requests": "Запросы",
+    "col_tokens": "Токены",
+    "col_avg_latency": "Задержка",
+    "col_ttft": "TTFT",
+    "col_failed": "Ошибки",
+    "chat": "Чат",
+    "image": "Изображения"
   }
 }

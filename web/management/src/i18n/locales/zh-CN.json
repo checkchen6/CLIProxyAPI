@@ -106,6 +106,7 @@
     "plugin_store": "插件商店",
     "config_management": "配置面板",
     "logs": "日志查看",
+    "usage_stats": "用量统计",
     "system_info": "中心信息"
   },
   "nav_groups": {
@@ -125,6 +126,7 @@
     "plugins": "插件启停与配置",
     "plugin_store": "发现并安装插件",
     "logs": "请求追踪与排查",
+    "usage_stats": "Token 与请求分析",
     "config_management": "网关基础配置",
     "system_info": "运行与诊断信息"
   },
@@ -1720,5 +1722,35 @@
     "modelCatalog": {
       "notLoaded": "未加载"
     }
+  },
+  "usage_stats": {
+    "title": "用量统计",
+    "subtitle": "各模型与端点的 Token 消耗及请求分布",
+    "today": "今天",
+    "last_7_days": "近 7 天",
+    "last_30_days": "近 30 天",
+    "loading": "加载用量数据中...",
+    "no_data": "暂无数据",
+    "total_requests": "总请求数",
+    "chat_tokens": "对话 Token",
+    "image_requests": "生图请求",
+    "failure_rate": "失败率",
+    "avg_latency": "平均耗时",
+    "avg_ttft": "平均首 Token",
+    "in": "输入",
+    "out": "输出",
+    "failures": "次失败",
+    "request_distribution": "请求类型分布",
+    "hourly_latency": "每小时平均耗时趋势",
+    "model_detail": "模型明细",
+    "col_model": "模型",
+    "col_type": "类型",
+    "col_requests": "请求数",
+    "col_tokens": "总 Token",
+    "col_avg_latency": "平均耗时",
+    "col_ttft": "首 Token",
+    "col_failed": "失败",
+    "chat": "对话",
+    "image": "生图"
   }
 }

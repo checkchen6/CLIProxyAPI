@@ -173,6 +173,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}
+
+	// Initialize usage statistics module (SQLite + dashboard)
+	s.initUsageStats(mgmt)
 }
 
 func (s *Server) managementAvailabilityMiddleware() gin.HandlerFunc {

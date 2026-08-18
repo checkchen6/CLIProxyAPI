@@ -103,6 +103,10 @@ type Server struct {
 
 	exampleAPIKeySafeModeEnabled bool
 	exampleAPIKeySafeModeActive  atomic.Bool
+
+	// usageStatsStore holds the SQLite store for the usage statistics module.
+	// Closed on Server.Stop() to ensure WAL checkpoint and clean shutdown.
+	usageStatsStore interface{ Close() error }
 }
 
 // NewServer creates and initializes a new API server instance.
@@ -389,6 +393,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	errShutdown := s.server.Shutdown(ctx)
 	if s.codexLiveHandler != nil {
 		s.codexLiveHandler.Close()
+	}
+	if s.usageStatsStore != nil {
+		if errClose := s.usageStatsStore.Close(); errClose != nil {
+			log.Errorf("usagestats: failed to close database: %v", errClose)
+		}
 	}
 	if errShutdown != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %v", errShutdown)
